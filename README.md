@@ -1,2 +1,1 @@
-# ai-bartender-contest
-AI-powered bartender that generates cocktail recommendations from available ingredients using Google AI Studio. Built for the Dev.to Google AI Studio Challenge 2025.
+AI Bartender Teacher (Gemini + FFmpeg). Generates storyboard + SRT, composes 1080x1920 MP4.

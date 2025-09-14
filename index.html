@@ -1,0 +1,135 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>AI Bartender Teacher</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <style>
+    body{font-family:system-ui,Segoe UI,Roboto,Arial;margin:24px;max-width:900px}
+    .box{border:1px solid #ddd;border-radius:12px;padding:16px;margin-bottom:16px}
+    label{display:block;margin:8px 0 4px}
+    input,select,textarea{width:100%;padding:8px}
+    button{padding:10px 16px;border-radius:10px;border:0;background:#1f6feb;color:#fff;cursor:pointer}
+    .row{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+    .muted{color:#666}
+    .btn-alt{background:#0a7b34}
+  </style>
+</head>
+<body>
+  <h1>AI Bartender Teacher</h1>
+  <p class="muted">Generate a 60s educational cocktail lesson (storyboard → TTS → captions → MP4).</p>
+
+  <div class="box">
+    <h2>1) Generate Storyboard</h2>
+    <div class="row">
+      <div><label>Cocktail</label><input id="name" value="Forest Whisperer"/></div>
+      <div><label>Language</label>
+        <select id="lang"><option>English</option><option>French</option></select>
+      </div>
+    </div>
+    <label>Spec (ingredients & method)</label>
+    <textarea id="spec" rows="3">vodka 1.5 oz, maraschino 0.5 oz, cranberry 1 oz, lemon 0.5 oz; shake hard; fine strain; coupe; lemon twist</textarea>
+    <button onclick="genSB()">Generate</button>
+    <pre id="sb" class="box" style="white-space:pre-wrap"></pre>
+    <input type="hidden" id="narr"/>
+    <input type="hidden" id="title_hidden"/>
+  </div>
+
+  <div class="box">
+    <h2>2) Compose Video</h2>
+    <p>Upload 1080×1920 images (step_1.jpg ... step_N.jpg). Optional: narration WAV. If you skip both, the server will auto-generate clean placeholders + brand card.</p>
+    <label>Step images</label><input type="file" id="imgs" multiple accept="image/*"/>
+    <label>Captions (.SRT)</label><textarea id="srt" rows="6"></textarea>
+    <label>Audio (optional WAV)</label><input type="file" id="audio" accept="audio/wav"/>
+    <div class="row">
+      <button onclick="compose()">Create MP4</button>
+      <div>
+        <label>TTS voice (for auto-build)</label>
+        <select id="voice" class="form-control">
+          <option value="elevenlabs:JBFqnCBsd6RMkjVDRZzb" selected>George (ElevenLabs)</option>
+          <option value="">— Choose a voice —</option>
+          <option value="en-US-AriaNeural">English (US) · Aria (female)</option>
+          <option value="en-US-GuyNeural">English (US) · Guy (male)</option>
+          <option value="en-GB-LibbyNeural">English (UK) · Libby (female)</option>
+          <option value="fr-FR-DeniseNeural">French (FR) · Denise (female)</option>
+          <option value="__custom__">→ Custom…</option>
+        </select>
+        <input id="voice_custom" class="form-control" placeholder="e.g., elevenlabs:JBFqnCBsd6RMkjVDRZzb" style="display:none" value="elevenlabs:JBFqnCBsd6RMkjVDRZzb">
+        <div id="voice_help" class="muted" style="display:none;font-size:0.95em;margin-top:4px">
+          For ElevenLabs, enter: <b>elevenlabs:&lt;voice_id&gt;</b> (e.g., <code>elevenlabs:EXAVITQu4vr4xnSDxMaL</code>)<br>
+          Find voice IDs at <a href="https://elevenlabs.io/" target="_blank">elevenlabs.io</a>.
+        </div>
+        <button class="btn-alt" onclick="autobuild()">Auto-build with TTS</button>
+      </div>
+    </div>
+    <div id="out" class="muted"></div>
+  </div>
+
+<script>
+  function getSelectedVoice() {
+    const v = document.getElementById('voice').value.trim();
+    if (v === '__custom__') {
+      return document.getElementById('voice_custom').value.trim();
+    }
+    return v;
+  }
+
+  // Show/hide the custom voice field when “Custom…” is chosen
+  document.getElementById('voice').addEventListener('change', (e) => {
+    const custom = document.getElementById('voice_custom');
+    const help = document.getElementById('voice_help');
+    const show = (e.target.value === '__custom__');
+    custom.style.display = show ? '' : 'none';
+    help.style.display = show ? '' : 'none';
+  });
+
+  async function genSB(){
+    const body = {
+      name: document.getElementById('name').value,
+      spec: document.getElementById('spec').value,
+      language: document.getElementById('lang').value
+    };
+    const r = await fetch('/api/storyboard', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(body)
+    });
+    const j = await r.json();
+    document.getElementById('sb').textContent = JSON.stringify(j.storyboard, null, 2);
+    document.getElementById('srt').value = j.srt;
+    document.getElementById('narr').value = j.narration_script;
+    document.getElementById('title_hidden').value = j.storyboard?.cocktail_name || body.name;
+  }
+
+  async function compose(withBlob){
+    const fd = new FormData();
+    const files = document.getElementById('imgs').files;
+    for (let f of files){ fd.append('files', f, f.name); }
+    fd.append('srt', document.getElementById('srt').value);
+
+    // pass title (and optional ingredients/method JSON if you want to override the defaults)
+    fd.append('title', document.getElementById('title_hidden').value);
+
+    if (withBlob){ fd.append('audio', withBlob, 'lesson.wav'); }
+    const r = await fetch('/api/compose', {method:'POST', body: fd});
+    if (!r.ok){ document.getElementById('out').textContent = 'Error composing video.'; return; }
+    const blob = await r.blob();
+    const url = URL.createObjectURL(blob);
+    document.getElementById('out').innerHTML = `<a href="${url}" download="lesson_final.mp4">Download lesson_final.mp4</a>`;
+  }
+
+  async function autobuild(){
+    const narr = document.getElementById('narr').value.trim();
+    if (!narr){ document.getElementById('out').textContent = 'Generate storyboard first.'; return; }
+  const voice = getSelectedVoice() || 'en-US-AriaNeural';
+    const t = await fetch('/api/tts', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ text: narr, voice })
+    });
+    if (!t.ok){ document.getElementById('out').textContent = 'TTS failed. Check server logs or TTS_CMD_TEMPLATE.'; return; }
+    const wav = await t.blob();
+    await compose(new File([wav], 'lesson.wav', {type:'audio/wav'}));
+  }
+</script>
+</body></html>
